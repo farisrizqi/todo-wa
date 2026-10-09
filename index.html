@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Weekly To-Do's</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>if(!window.supabase){var s=document.createElement('script');s.src='https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js';document.head.appendChild(s);}</script>
+</head>
+<body>
+<button id="theme-toggle" title="Toggle light / dark">☀️</button>
+<button id="profile-toggle" title="Profile">👤</button>
+<div id="profile-panel" class="hidden">
+  <b>Profile</b>
+  <small id="profile-email"></small>
+  <input id="profile-name" type="text" maxlength="30" placeholder="Display name" />
+  <button id="btn-save-name">Save name</button>
+  <button id="btn-logout">Log out</button>
+</div>
+<div class="page">
+  <section id="auth">
+    <div class="auth-card">
+      <h2 id="auth-title">Welcome back 👋</h2>
+      <p id="auth-sub">Sign in to see your week.</p>
+      <input id="auth-name" type="text" maxlength="30" placeholder="Your name (new accounts)" class="hidden" />
+      <input id="auth-email" type="email" placeholder="Email" />
+      <input id="auth-pass" type="password" placeholder="Password (min 6 chars)" />
+      <button class="go" id="btn-auth-go">Sign in</button>
+      <div class="swap"><span id="swap-text">New here?</span> <button id="btn-auth-swap">Create account</button></div>
+    </div>
+  </section>
+  <header class="topbar">
+    <div class="brand">
+      <h1>WEEKLY<br />TO-DO'S</h1>
+      <p class="greet" id="greet">👋 Hello!</p>
+      <p class="quote" id="quote"></p>
+      <div class="weeknav">
+        <button id="btn-prev" title="Previous week">‹</button>
+        <input id="input-week" type="date" title="Start of the week" />
+        <button id="btn-next" title="Next week">›</button>
+        <button id="btn-today">This week</button>
+      </div>
+    </div>
+    <div class="card overall">
+      <div class="overall-top"><span>Overall Progress</span><b id="ov-pct">0%</b></div>
+      <div class="bars" id="bars"></div>
+      <div class="bigbar"><div id="ov-bar"></div></div>
+      <div class="overall-foot"><span id="ov-count">0 / 0 Completed</span><span id="conn">● local</span></div>
+    </div>
+    <div class="card todaybox">
+      <h3>Tasks Today: <span id="today-date"></span></h3>
+      <div id="today-list"></div>
+    </div>
+  </header>
+
+  <div id="config-banner" class="banner hidden">
+    ⚠️ Supabase is not configured — local demo mode (data stays in this browser).
+    Fill in <code>SUPABASE_URL</code> &amp; <code>SUPABASE_ANON_KEY</code> in <code>app.js</code> to sync with the cloud.
+  </div>
+
+  <section class="card addbar">
+    <input id="input-title" type="text" maxlength="120" placeholder="＋ Add a new task..." />
+    <input id="input-due" type="datetime-local" title="Deadline" />
+    <select id="input-priority" title="Priority">
+      <option value="low">🟢 Easy</option>
+      <option value="medium" selected>🟡 Medium</option>
+      <option value="high">🔴 Urgent</option>
+    </select>
+    <button id="btn-add">Add</button>
+    <input id="input-search" type="search" placeholder="🔍 Search..." />
+  </section>
+  <small class="hint">Tasks without a date go to the <b>Inbox</b> below.</small>
+
+  <section id="inbox" class="inbox hidden">
+    <h3>📥 Inbox <small>no date</small></h3>
+    <div id="inbox-list"></div>
+  </section>
+
+  <main id="week" class="week"></main>
+
+  <footer>
+    <span>Worker: <code id="worker-label">not set</code></span>
+    <span>🔔 WhatsApp → 1 number</span>
+  </footer>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

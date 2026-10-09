@@ -1,0 +1,11 @@
+name = "todo-wa-bridge"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Isi via `wrangler secret put` untuk yang sensitif, atau dashboard Cloudflare.
+# Lihat cara setup di chat, bukan di file ini (biar key tidak ke-commit).
+[vars]
+REMINDER_OFFSET_MIN = "3"
+# SUPABASE_URL = "https://xyz.supabase.co"
+# GOWA_URL = "https://xxx.trycloudflare.com  (diisi SETELAH HP di-setup)"
+# TARGET_PHONE = "62812xxxxxxx"
