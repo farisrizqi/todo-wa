@@ -1,7 +1,7 @@
 /* ===== KONFIGURASI ===== */
 const SUPABASE_URL = "https://vfwinvfipuiztnqfjyow.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmd2ludmZpcHVpenRucWZqeW93Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NDE0NDUsImV4cCI6MjEwNzExNzQ0NX0.ENhNWvcuZBpB-KwYI2oLI-SbhmZMd8Y2T9oF_7oEa70";
-const WORKER_URL = ""; // e.g.: https://todo-wa-bridge.you.workers.dev (fill in later)
+const WORKER_URL = "https://todo-wa.farisnur07.workers.dev"; // e.g.: https://todo-wa-bridge.you.workers.dev (fill in later)
 
 /* ============================================================ */
 let sbClient = null;
