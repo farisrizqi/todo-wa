@@ -114,7 +114,11 @@ li.done .tt .t{text-decoration:line-through}
 .dot.low{background:var(--ok);box-shadow:0 0 7px #2fd47e88}
 .del{border:0;background:transparent;cursor:pointer;opacity:.45;font-size:16px;color:#8d99bd;line-height:1;padding:0}
 .del:hover{opacity:1;color:var(--danger);transform:scale(1.2)}
-.tt .rc{color:var(--accent2);font-weight:700;white-space:nowrap}
+.tt .rc{color:var(--accent2);font-weight:700;white-space:nowrap;cursor:pointer}
+.tt .rc.empty{opacity:.45;border:1px dashed var(--mut);border-radius:6px;padding:0 6px;font-weight:400}
+.tt .rc:hover{opacity:1}
+.chip .rcbtn{background:none;border:0;color:var(--accent2);cursor:pointer;font-size:12px;font-weight:700;padding:0 2px}
+.chip .rcbtn:hover{transform:scale(1.2)}
 .quick{display:flex;gap:6px;padding:8px 10px 12px}
 .quick input{flex:1;min-width:0;border:1px solid var(--line);border-radius:9px;padding:7px 8px;font-size:12px;background:#070d20;color:var(--ink)}
 .quick input:focus{outline:none;border-color:var(--accent)}

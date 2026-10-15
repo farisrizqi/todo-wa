@@ -145,6 +145,23 @@ async function removeTodo(id) {
   saveLocal(); render(); toast("🗑️ Deleted");
 }
 
+async function editRecipients(id) {
+  const t = todos.find(x => String(x.id) === String(id));
+  if (!t) return;
+  const cur = (t.recipients || []).join(", ");
+  const ans = prompt("Recipients (max 5, comma separated):", cur);
+  if (ans === null) return;
+  const rc = parseRecipients(ans);
+  if (rc.length > 5) { toast("Max 5 recipients"); return; }
+  if (sbClient) {
+    const { error } = await sbClient.from("todos").update({ recipients: rc }).eq("id", t.id);
+    if (error) { toast("Update failed: " + error.message); return; }
+  }
+  t.recipients = rc;
+  if (rc.length) { saveLastRecipients(rc); pushRecentNumbers(rc); }
+  saveLocal(); render(); toast(rc.length ? `Recipients → ${rc.length}` : "Recipients cleared");
+}
+
 /* ---------- WHATSAPP TRIGGER VIA WORKER ---------- */
 async function notifyWA(type, t) {
   if (!WORKER_URL) return;
@@ -174,7 +191,8 @@ function inboxTasks() {
 function liHTML(t, now) {
   const over = !t.done && t.due_at && new Date(t.due_at) < now;
   const rcp = t.recipients || [];
-  const time = (t.due_at || rcp.length) ? `<small>${t.due_at ? "⏰ " + fmtT(t.due_at) : ""}${over ? ' <span class="over">• late</span>' : ""}${rcp.length ? ` <span class="rc" title="${esc(rcp.join(", "))}">→ ${rcp.length}</span>` : ""}</small>` : "";
+  const rcBadge = `<span class="rc${rcp.length ? "" : " empty"}" title="${rcp.length ? esc(rcp.join(", ")) : "Add recipients"}" onclick="event.stopPropagation();editRecipients('${t.id}')">${rcp.length ? `→ ${rcp.length}` : "+ numbers"}</span>`;
+  const time = `<small>${t.due_at ? "⏰ " + fmtT(t.due_at) : ""}${over ? ' <span class="over">• late</span>' : ""} ${rcBadge}</small>`;
   const dot = `<span class="dot ${t.priority || "medium"}" title="Priority: ${t.priority || "medium"}"></span>`;
   return `<li class="${t.done ? "done" : ""}">
     <button class="sq" onclick="toggleDone('${t.id}')" title="Check">${t.done ? "✓" : ""}</button>
@@ -218,10 +236,14 @@ function render() {
 
   // inbox
   $("inbox").classList.toggle("hidden", inbox.length === 0);
-  $("inbox-list").innerHTML = inbox.map(t => `<span class="chip${t.done ? " done" : ""}">
+  $("inbox-list").innerHTML = inbox.map(t => {
+    const rcp = t.recipients || [];
+    return `<span class="chip${t.done ? " done" : ""}">
     <button class="sq" style="width:16px;height:16px;font-size:10px" onclick="toggleDone('${t.id}')">${t.done ? "✓" : ""}</button>
     <span onclick="toggleDone('${t.id}')">${esc(t.title)}</span>
-    <button class="x" onclick="removeTodo('${t.id}')">×</button></span>`).join("");
+    <button class="rcbtn" onclick="editRecipients('${t.id}')" title="${rcp.length ? esc(rcp.join(", ")) : "Add recipients"}">${rcp.length ? "→" + rcp.length : "+"}</button>
+    <button class="x" onclick="removeTodo('${t.id}')">×</button></span>`;
+  }).join("");
 
   // 7 day columns
   $("week").innerHTML = [0, 1, 2, 3, 4, 5, 6].map(i => {
