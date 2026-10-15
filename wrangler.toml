@@ -2,10 +2,18 @@ name = "todo-wa-bridge"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
-# Isi via `wrangler secret put` untuk yang sensitif, atau dashboard Cloudflare.
-# Lihat cara setup di chat, bukan di file ini (biar key tidak ke-commit).
+# Reminder sweep runs inside Cloudflare every minute (free plan).
+# No external cron-job.org needed.
+[triggers]
+crons = ["* * * * *"]
+
+# Set secrets via dashboard (Settings > Variables and Secrets) or:
+#   wrangler secret put SUPABASE_URL / SUPABASE_SERVICE_KEY / TARGET_PHONE
+# Never commit real keys in this file.
 [vars]
 REMINDER_OFFSET_MIN = "3"
 # SUPABASE_URL = "https://xyz.supabase.co"
-# GOWA_URL = "https://xxx.trycloudflare.com  (diisi SETELAH HP di-setup)"
-# TARGET_PHONE = "62812xxxxxxx"
+# GOWA_URL = "https://xxx.onrender.com (fill after GOWA is deployed; empty = sending disabled)"
+# GOWA_BASIC_AUTH = "base64(user:pass), only if GOWA uses --basic-auth"
+# GOWA_DEVICE_ID = "optional, only with multiple linked devices"
+# TARGET_PHONE = "62812xxxxxxx (digits only, suffix added automatically)"
