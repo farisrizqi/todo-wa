@@ -48,6 +48,33 @@ function toast(msg) {
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
 function esc(s) { return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function normNum(s) {
+  let d = String(s || "").replace(/\D/g, "");
+  if (d.startsWith("0")) d = "62" + d.slice(1);
+  return d;
+}
+function parseRecipients(str) {
+  const out = [];
+  String(str || "").split(",").forEach(p => {
+    const d = normNum(p);
+    if (d.length >= 9 && !out.includes(d)) out.push(d);
+  });
+  return out;
+}
+function getLastRecipients() { try { return JSON.parse(localStorage.getItem("todo-last-rc") || "[]"); } catch (e) { return []; } }
+function saveLastRecipients(list) { try { localStorage.setItem("todo-last-rc", JSON.stringify(list)); } catch (e) {} }
+function pushRecentNumbers(list) {
+  try {
+    let rec = JSON.parse(localStorage.getItem("todo-recent-nums") || "[]");
+    list.forEach(n => { rec = [n].concat(rec.filter(x => x !== n)); });
+    localStorage.setItem("todo-recent-nums", JSON.stringify(rec.slice(0, 12)));
+  } catch (e) {}
+}
+function refreshDatalist() {
+  const dl = $("rc-recent"); if (!dl) return;
+  let rec = []; try { rec = JSON.parse(localStorage.getItem("todo-recent-nums") || "[]"); } catch (e) {}
+  dl.innerHTML = rec.map(n => `<option value="${esc(n)}">`).join("");
+}
 
 /* ---------- DATA ---------- */
 async function load() {
@@ -73,20 +100,24 @@ async function addTodo() {
   const title = $("input-title").value.trim();
   if (!title) { toast("Type a task title first"); return; }
   const dueVal = $("input-due").value;
+  const rc = parseRecipients($("input-to").value);
+  if (rc.length > 5) { toast("Max 5 recipients"); return; }
   const r = await insertTodo({
     title, due_at: dueVal ? new Date(dueVal).toISOString() : null,
     priority: $("input-priority").value, done: false, reminded: false, sent: false,
+    recipients: rc,
   });
   if (!r) return;
-  $("input-title").value = ""; $("input-due").value = "";
-  render(); toast("✅ Task added");
+  $("input-title").value = ""; $("input-due").value = ""; $("input-to").value = "";
+  if (rc.length) { saveLastRecipients(rc); pushRecentNumbers(rc); }
+  render(); toast(rc.length ? `✅ Task added → ${rc.length}` : "✅ Task added (no WA recipients)");
 }
 async function quickAdd(dayIdx) {
   const inp = $("q-" + dayIdx);
   const title = inp.value.trim();
   if (!title) return;
   const d = addDays(weekStart, dayIdx); d.setHours(9, 0, 0, 0); // default 9:00 AM
-  const r = await insertTodo({ title, due_at: d.toISOString(), priority: "medium", done: false, reminded: false, sent: false });
+  const r = await insertTodo({ title, due_at: d.toISOString(), priority: "medium", done: false, reminded: false, sent: false, recipients: getLastRecipients().slice(0, 5) });
   if (!r) return;
   inp.value = ""; render(); toast("✅ Added to " + DAY_NAMES[dayIdx]);
 }
@@ -120,7 +151,7 @@ async function notifyWA(type, t) {
   try {
     await fetch(WORKER_URL + "/notify", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, todo: { id: t.id, title: t.title, due_at: t.due_at } }),
+      body: JSON.stringify({ type, todo: { id: t.id, title: t.title, due_at: t.due_at, recipients: t.recipients || [] } }),
     });
     toast("📲 Sent to WhatsApp");
   } catch (e) { console.warn("worker unreachable", e); }
@@ -142,7 +173,8 @@ function inboxTasks() {
 }
 function liHTML(t, now) {
   const over = !t.done && t.due_at && new Date(t.due_at) < now;
-  const time = t.due_at ? `<small>⏰ ${fmtT(t.due_at)}${over ? ' <span class="over">• late</span>' : ""}</small>` : "";
+  const rcp = t.recipients || [];
+  const time = (t.due_at || rcp.length) ? `<small>${t.due_at ? "⏰ " + fmtT(t.due_at) : ""}${over ? ' <span class="over">• late</span>' : ""}${rcp.length ? ` <span class="rc" title="${esc(rcp.join(", "))}">→ ${rcp.length}</span>` : ""}</small>` : "";
   const dot = `<span class="dot ${t.priority || "medium"}" title="Priority: ${t.priority || "medium"}"></span>`;
   return `<li class="${t.done ? "done" : ""}">
     <button class="sq" onclick="toggleDone('${t.id}')" title="Check">${t.done ? "✓" : ""}</button>
@@ -151,6 +183,7 @@ function liHTML(t, now) {
   </li>`;
 }
 function render() {
+  refreshDatalist();
   const now = new Date();
   const today = new Date(); today.setHours(0, 0, 0, 0);
 

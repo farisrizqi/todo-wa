@@ -8,9 +8,10 @@ compatibility_date = "2024-01-01"
 crons = ["* * * * *"]
 
 # Set secrets via dashboard (Settings > Variables and Secrets).
-# Never commit real keys in this file.
+# Never commit real keys in this file. Recipients come per-todo, no fixed target here.
 [vars]
 REMINDER_OFFSET_MIN = "3"
 # SUPABASE_URL = "https://xyz.supabase.co"
-# CALLMEBOT_PHONE = "62812xxxxxxx (your number, digits only)"
-# CALLMEBOT_APIKEY = "personal key from the CallMeBot WhatsApp bot"
+# GOWA_URL = "https://gowa-xxx.app.ravenhost.space (fill after GOWA host is live; empty = sending disabled)"
+# GOWA_BASIC_AUTH = "base64(user:pass), only if GOWA uses --basic-auth"
+# GOWA_DEVICE_ID = "optional, only with multiple linked devices"

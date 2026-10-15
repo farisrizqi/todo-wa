@@ -63,6 +63,8 @@
   <section class="card addbar">
     <input id="input-title" type="text" maxlength="120" placeholder="＋ Add a new task..." />
     <input id="input-due" type="datetime-local" title="Deadline" />
+    <input id="input-to" type="text" placeholder="To: 62812..., 62813... (max 5)" list="rc-recent" title="Recipients" />
+    <datalist id="rc-recent"></datalist>
     <select id="input-priority" title="Priority">
       <option value="low">🟢 Easy</option>
       <option value="medium" selected>🟡 Medium</option>

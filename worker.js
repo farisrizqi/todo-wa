@@ -1,14 +1,11 @@
-/* Cloudflare Worker: bridge Todo App -> WhatsApp via CallMeBot (free API, no server needed)
+/* Cloudflare Worker: bridge Todo App -> GOWA (aldinokemal v9 API), multi-recipient.
+ * Recipients travel per-todo (todo.recipients, max 5). No fixed target number here.
  * Env vars (dashboard Settings > Variables and Secrets):
  *   SUPABASE_URL, SUPABASE_SERVICE_KEY,
- *   CALLMEBOT_PHONE (e.g. 62812xxxxxxx, digits, no +),
- *   CALLMEBOT_APIKEY (from the CallMeBot WhatsApp bot activation),
+ *   GOWA_URL (e.g. https://gowa-xxx.app.ravenhost.space, empty = sending disabled),
+ *   GOWA_BASIC_AUTH (base64 of "user:pass", optional, only if GOWA uses --basic-auth),
+ *   GOWA_DEVICE_ID (optional, required only with multiple linked devices),
  *   REMINDER_OFFSET_MIN (default 3)
- *
- * Setup (once, ~5 min, on your phone):
- *   1. Check the current bot number at https://www.callmebot.com/blog/free-api-whatsapp-messages/
- *   2. Save it as a contact, send it:  I allow callmebot to send me messages
- *   3. The bot replies with your personal APIKEY -> paste it into CALLMEBOT_APIKEY.
  */
 
 function fmtDate(iso) {
@@ -16,30 +13,52 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-async function sendWA(env, text) {
-  const phone = String(env.CALLMEBOT_PHONE || "").replace(/\D/g, "");
-  const key = String(env.CALLMEBOT_APIKEY || "").trim();
-  if (!phone || !key) return { skipped: true, reason: "CALLMEBOT_PHONE/APIKEY not set" };
-  const url = "https://api.callmebot.com/whatsapp.php?phone=" + encodeURIComponent("+" + phone)
-    + "&text=" + encodeURIComponent(text)
-    + "&apikey=" + encodeURIComponent(key);
-  let res, body = "";
-  try {
-    res = await fetch(url);
-    body = await res.text();
-  } catch (e) {
-    return { ok: false, reason: "CallMeBot unreachable: " + String(e && e.message || e).slice(0, 120) };
-  }
-  // CallMeBot answers 200 with an error text on failure (e.g. "APIKey is invalid").
-  const failed = /error|invalid|not allowed|limit exceeded|blocked/i.test(body);
-  return { ok: res.ok && !failed, status: res.status, detail: body.slice(0, 200) };
+function normPhone(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.includes("@")) return s;
+  let d = s.replace(/\D/g, "");
+  if (d.startsWith("0")) d = "62" + d.slice(1);
+  return d + "@s.whatsapp.net";
 }
 
-async function markReminded(env, id) {
+async function sendOne(env, text, rawPhone) {
+  const phone = normPhone(rawPhone);
+  if (!phone) return { ok: false, phone: String(rawPhone), reason: "bad number" };
+  const headers = { "Content-Type": "application/json" };
+  if (env.GOWA_BASIC_AUTH) headers["Authorization"] = "Basic " + String(env.GOWA_BASIC_AUTH).trim();
+  if (env.GOWA_DEVICE_ID) headers["X-Device-Id"] = String(env.GOWA_DEVICE_ID).trim();
+  let res;
+  try {
+    res = await fetch(env.GOWA_URL.replace(/\/$/, "") + "/send/message", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ phone, message: text }),
+    });
+  } catch (e) {
+    return { ok: false, phone, reason: "GOWA unreachable: " + String(e && e.message || e).slice(0, 120) };
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* waking-up page is HTML, not JSON */ }
+  const ok = res.ok && !!data && data.code === "SUCCESS";
+  return { ok, phone, message_id: (data && data.results && data.results.message_id) || null, detail: (data && (data.message || data.code)) || "non-JSON response (GOWA may be waking up)" };
+}
+
+async function sendWA(env, text, recipients) {
+  if (!env.GOWA_URL) return { skipped: true, reason: "GOWA_URL not set" };
+  const list = (recipients || []).slice(0, 5);
+  if (!list.length) return { skipped: true, reason: "no recipients" };
+  const results = [];
+  for (const p of list) results.push(await sendOne(env, text, p));
+  const allOk = results.every(r => r.ok === true);
+  return { ok: allOk, results };
+}
+
+async function patchTodo(env, id, patch) {
   await fetch(`${env.SUPABASE_URL}/rest/v1/todos?id=eq.${id}`, {
     method: "PATCH",
     headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ reminded: true }),
+    body: JSON.stringify(patch),
   }).catch(() => {});
 }
 
@@ -49,19 +68,21 @@ async function handleNotify(req, env) {
   const text = type === "done"
     ? `✅ Done: ${todo.title}`
     : `⏰ Reminder: ${todo.title} (${fmtDate(todo.due_at)})`;
-  const r = await sendWA(env, text);
+  const r = await sendWA(env, text, todo.recipients);
+  if (type === "done" && r.ok === true && todo.id) await patchTodo(env, todo.id, { sent: true });
   return Response.json({ sent: r.ok === true, ...r });
 }
 
 // Reminder sweep: due within [now-30m, now+offset], not done, not reminded.
-// Only marks reminded when the send actually succeeded (or sending is disabled),
-// so a failed send gets retried on the next run instead of losing the reminder.
+// Only marks reminded when every send actually succeeded (or sending is disabled),
+// so a sleeping GOWA gets retried on the next run instead of losing the reminder.
+// Todos with zero recipients are marked immediately so they are not re-swept forever.
 async function handleCheck(env) {
   const offsetMin = Number(env.REMINDER_OFFSET_MIN || 3);
   const now = Date.now();
   const dueBefore = new Date(now + offsetMin * 60 * 1000).toISOString();
   const dueAfter = new Date(now - 30 * 60 * 1000).toISOString();
-  const q = `${env.SUPABASE_URL}/rest/v1/todos?select=id,title,due_at&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=20`;
+  const q = `${env.SUPABASE_URL}/rest/v1/todos?select=id,title,due_at,recipients&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=20`;
   const listRes = await fetch(q, {
     headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
   });
@@ -69,8 +90,8 @@ async function handleCheck(env) {
   const items = await listRes.json();
   const results = [];
   for (const t of items) {
-    const r = await sendWA(env, `⏰ Reminder: ${t.title} (${fmtDate(t.due_at)})`);
-    if (r.ok === true || r.skipped) await markReminded(env, t.id);
+    const r = await sendWA(env, `⏰ Reminder: ${t.title} (${fmtDate(t.due_at)})`, t.recipients);
+    if (r.ok === true || r.skipped) await patchTodo(env, t.id, { reminded: true });
     results.push({ id: t.id, ...r });
   }
   return Response.json({ checked: items.length, offsetMin, results });
@@ -82,7 +103,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/notify") return handleNotify(req, env);
     if (req.method === "GET" && url.pathname === "/check-reminders") return handleCheck(env);
     if (req.method === "GET" && url.pathname === "/health") {
-      return Response.json({ ok: true, sender: !!(env.CALLMEBOT_PHONE && env.CALLMEBOT_APIKEY) });
+      return Response.json({ ok: true, mode: "gowa-multi", sender: !!env.GOWA_URL });
     }
     return new Response("Todo WA Bridge: POST /notify | GET /check-reminders | GET /health", { status: 404 });
   },
