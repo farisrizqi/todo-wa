@@ -1,11 +1,14 @@
-/* Cloudflare Worker: bridge Todo App -> GOWA (aldinokemal v9 API)
+/* Cloudflare Worker: bridge Todo App -> WhatsApp via CallMeBot (free API, no server needed)
  * Env vars (dashboard Settings > Variables and Secrets):
  *   SUPABASE_URL, SUPABASE_SERVICE_KEY,
- *   GOWA_URL (e.g. https://xxx.onrender.com, empty = sending disabled),
- *   GOWA_BASIC_AUTH (base64 of "user:pass", optional, only if GOWA uses --basic-auth),
- *   GOWA_DEVICE_ID (optional, required only with multiple linked devices),
- *   TARGET_PHONE (e.g. 62812xxxxxxx),
+ *   CALLMEBOT_PHONE (e.g. 62812xxxxxxx, digits, no +),
+ *   CALLMEBOT_APIKEY (from the CallMeBot WhatsApp bot activation),
  *   REMINDER_OFFSET_MIN (default 3)
+ *
+ * Setup (once, ~5 min, on your phone):
+ *   1. Check the current bot number at https://www.callmebot.com/blog/free-api-whatsapp-messages/
+ *   2. Save it as a contact, send it:  I allow callmebot to send me messages
+ *   3. The bot replies with your personal APIKEY -> paste it into CALLMEBOT_APIKEY.
  */
 
 function fmtDate(iso) {
@@ -13,34 +16,23 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-function normPhone(raw) {
-  const s = String(raw || "").trim();
-  if (!s) return "";
-  if (s.includes("@")) return s;
-  return s.replace(/\D/g, "") + "@s.whatsapp.net";
-}
-
 async function sendWA(env, text) {
-  if (!env.GOWA_URL) return { skipped: true, reason: "GOWA_URL not set" };
-  const phone = normPhone(env.TARGET_PHONE);
-  if (!phone) return { ok: false, reason: "TARGET_PHONE not set" };
-  const headers = { "Content-Type": "application/json" };
-  if (env.GOWA_BASIC_AUTH) headers["Authorization"] = "Basic " + String(env.GOWA_BASIC_AUTH).trim();
-  if (env.GOWA_DEVICE_ID) headers["X-Device-Id"] = String(env.GOWA_DEVICE_ID).trim();
-  let res;
+  const phone = String(env.CALLMEBOT_PHONE || "").replace(/\D/g, "");
+  const key = String(env.CALLMEBOT_APIKEY || "").trim();
+  if (!phone || !key) return { skipped: true, reason: "CALLMEBOT_PHONE/APIKEY not set" };
+  const url = "https://api.callmebot.com/whatsapp.php?phone=" + encodeURIComponent("+" + phone)
+    + "&text=" + encodeURIComponent(text)
+    + "&apikey=" + encodeURIComponent(key);
+  let res, body = "";
   try {
-    res = await fetch(env.GOWA_URL.replace(/\/$/, "") + "/send/message", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ phone, message: text }),
-    });
+    res = await fetch(url);
+    body = await res.text();
   } catch (e) {
-    return { ok: false, reason: "GOWA unreachable (sleeping or down): " + String(e && e.message || e).slice(0, 120) };
+    return { ok: false, reason: "CallMeBot unreachable: " + String(e && e.message || e).slice(0, 120) };
   }
-  let data = null;
-  try { data = await res.json(); } catch (e) { /* Render wake-up page is HTML, not JSON */ }
-  const ok = res.ok && !!data && data.code === "SUCCESS";
-  return { ok, status: res.status, message_id: (data && data.results && data.results.message_id) || null, detail: (data && (data.message || data.code)) || "non-JSON response (GOWA may be waking up)" };
+  // CallMeBot answers 200 with an error text on failure (e.g. "APIKey is invalid").
+  const failed = /error|invalid|not allowed|limit exceeded|blocked/i.test(body);
+  return { ok: res.ok && !failed, status: res.status, detail: body.slice(0, 200) };
 }
 
 async function markReminded(env, id) {
@@ -63,7 +55,7 @@ async function handleNotify(req, env) {
 
 // Reminder sweep: due within [now-30m, now+offset], not done, not reminded.
 // Only marks reminded when the send actually succeeded (or sending is disabled),
-// so a sleeping GOWA gets retried on the next run instead of losing the reminder.
+// so a failed send gets retried on the next run instead of losing the reminder.
 async function handleCheck(env) {
   const offsetMin = Number(env.REMINDER_OFFSET_MIN || 3);
   const now = Date.now();
@@ -89,11 +81,12 @@ export default {
     const url = new URL(req.url);
     if (req.method === "POST" && url.pathname === "/notify") return handleNotify(req, env);
     if (req.method === "GET" && url.pathname === "/check-reminders") return handleCheck(env);
-    if (req.method === "GET" && url.pathname === "/health") return Response.json({ ok: true, gowa: !!env.GOWA_URL });
+    if (req.method === "GET" && url.pathname === "/health") {
+      return Response.json({ ok: true, sender: !!(env.CALLMEBOT_PHONE && env.CALLMEBOT_APIKEY) });
+    }
     return new Response("Todo WA Bridge: POST /notify | GET /check-reminders | GET /health", { status: 404 });
   },
-  // Workers Cron Trigger (see wrangler.toml): runs the reminder sweep every minute,
-  // no external cron-job.org needed.
+  // Workers Cron Trigger (see wrangler.toml): runs the reminder sweep every minute.
   async scheduled(_event, env) {
     await handleCheck(env).catch(() => {});
   },
