@@ -16,7 +16,8 @@
   <b>Profile</b>
   <small id="profile-email"></small>
   <input id="profile-name" type="text" maxlength="30" placeholder="Display name" />
-  <button id="btn-save-name">Save name</button>
+  <input id="profile-phone" type="tel" placeholder="WhatsApp number: 62812..." />
+  <button id="btn-save-name">Save profile</button>
   <button id="btn-logout">Log out</button>
 </div>
 <div class="page">
@@ -63,8 +64,6 @@
   <section class="card addbar">
     <input id="input-title" type="text" maxlength="120" placeholder="＋ Add a new task..." />
     <input id="input-due" type="datetime-local" title="Deadline" />
-    <input id="input-to" type="text" placeholder="To: 62812..., 62813... (max 5)" list="rc-recent" title="Recipients" />
-    <datalist id="rc-recent"></datalist>
     <select id="input-priority" title="Priority">
       <option value="low">🟢 Easy</option>
       <option value="medium" selected>🟡 Medium</option>

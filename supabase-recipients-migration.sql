@@ -1,6 +1,5 @@
--- Per-todo recipients (max 5 numbers per todo, chosen at creation).
--- Run in Supabase Dashboard > SQL Editor > New Query > Run,
--- AFTER supabase-schema.sql (and auth migration, if used).
-
-alter table public.todos
-  add column if not exists recipients text[] not null default '{}';
+-- SUPERSEDED - DO NOT RUN.
+-- Per-todo recipients were replaced by per-user profile numbers.
+-- Run supabase-profiles-migration.sql instead.
+-- (This file is kept only so the history is clear.)
+select 1;

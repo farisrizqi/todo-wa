@@ -53,27 +53,12 @@ function normNum(s) {
   if (d.startsWith("0")) d = "62" + d.slice(1);
   return d;
 }
-function parseRecipients(str) {
-  const out = [];
-  String(str || "").split(",").forEach(p => {
-    const d = normNum(p);
-    if (d.length >= 9 && !out.includes(d)) out.push(d);
-  });
-  return out;
-}
-function getLastRecipients() { try { return JSON.parse(localStorage.getItem("todo-last-rc") || "[]"); } catch (e) { return []; } }
-function saveLastRecipients(list) { try { localStorage.setItem("todo-last-rc", JSON.stringify(list)); } catch (e) {} }
-function pushRecentNumbers(list) {
-  try {
-    let rec = JSON.parse(localStorage.getItem("todo-recent-nums") || "[]");
-    list.forEach(n => { rec = [n].concat(rec.filter(x => x !== n)); });
-    localStorage.setItem("todo-recent-nums", JSON.stringify(rec.slice(0, 12)));
-  } catch (e) {}
-}
-function refreshDatalist() {
-  const dl = $("rc-recent"); if (!dl) return;
-  let rec = []; try { rec = JSON.parse(localStorage.getItem("todo-recent-nums") || "[]"); } catch (e) {}
-  dl.innerHTML = rec.map(n => `<option value="${esc(n)}">`).join("");
+let profilePhone = "";
+async function loadProfile() {
+  profilePhone = "";
+  if (!sbClient || !user) return;
+  const { data } = await sbClient.from("profiles").select("phone").eq("id", user.id).maybeSingle();
+  if (data && data.phone) profilePhone = data.phone;
 }
 
 /* ---------- DATA ---------- */
@@ -100,24 +85,20 @@ async function addTodo() {
   const title = $("input-title").value.trim();
   if (!title) { toast("Type a task title first"); return; }
   const dueVal = $("input-due").value;
-  const rc = parseRecipients($("input-to").value);
-  if (rc.length > 5) { toast("Max 5 recipients"); return; }
   const r = await insertTodo({
     title, due_at: dueVal ? new Date(dueVal).toISOString() : null,
     priority: $("input-priority").value, done: false, reminded: false, sent: false,
-    recipients: rc,
   });
   if (!r) return;
-  $("input-title").value = ""; $("input-due").value = ""; $("input-to").value = "";
-  if (rc.length) { saveLastRecipients(rc); pushRecentNumbers(rc); }
-  render(); toast(rc.length ? `✅ Task added → ${rc.length}` : "✅ Task added (no WA recipients)");
+  $("input-title").value = ""; $("input-due").value = "";
+  render(); toast("✅ Task added");
 }
 async function quickAdd(dayIdx) {
   const inp = $("q-" + dayIdx);
   const title = inp.value.trim();
   if (!title) return;
   const d = addDays(weekStart, dayIdx); d.setHours(9, 0, 0, 0); // default 9:00 AM
-  const r = await insertTodo({ title, due_at: d.toISOString(), priority: "medium", done: false, reminded: false, sent: false, recipients: getLastRecipients().slice(0, 5) });
+  const r = await insertTodo({ title, due_at: d.toISOString(), priority: "medium", done: false, reminded: false, sent: false });
   if (!r) return;
   inp.value = ""; render(); toast("✅ Added to " + DAY_NAMES[dayIdx]);
 }
@@ -145,30 +126,13 @@ async function removeTodo(id) {
   saveLocal(); render(); toast("🗑️ Deleted");
 }
 
-async function editRecipients(id) {
-  const t = todos.find(x => String(x.id) === String(id));
-  if (!t) return;
-  const cur = (t.recipients || []).join(", ");
-  const ans = prompt("Recipients (max 5, comma separated):", cur);
-  if (ans === null) return;
-  const rc = parseRecipients(ans);
-  if (rc.length > 5) { toast("Max 5 recipients"); return; }
-  if (sbClient) {
-    const { error } = await sbClient.from("todos").update({ recipients: rc }).eq("id", t.id);
-    if (error) { toast("Update failed: " + error.message); return; }
-  }
-  t.recipients = rc;
-  if (rc.length) { saveLastRecipients(rc); pushRecentNumbers(rc); }
-  saveLocal(); render(); toast(rc.length ? `Recipients → ${rc.length}` : "Recipients cleared");
-}
-
 /* ---------- WHATSAPP TRIGGER VIA WORKER ---------- */
 async function notifyWA(type, t) {
   if (!WORKER_URL) return;
   try {
     await fetch(WORKER_URL + "/notify", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, todo: { id: t.id, title: t.title, due_at: t.due_at, recipients: t.recipients || [] } }),
+      body: JSON.stringify({ type, todo: { id: t.id, title: t.title, due_at: t.due_at, user_id: user ? user.id : null } }),
     });
     toast("📲 Sent to WhatsApp");
   } catch (e) { console.warn("worker unreachable", e); }
@@ -190,9 +154,7 @@ function inboxTasks() {
 }
 function liHTML(t, now) {
   const over = !t.done && t.due_at && new Date(t.due_at) < now;
-  const rcp = t.recipients || [];
-  const rcBadge = `<span class="rc${rcp.length ? "" : " empty"}" title="${rcp.length ? esc(rcp.join(", ")) : "Add recipients"}" onclick="event.stopPropagation();editRecipients('${t.id}')">${rcp.length ? `→ ${rcp.length}` : "+ numbers"}</span>`;
-  const time = `<small>${t.due_at ? "⏰ " + fmtT(t.due_at) : ""}${over ? ' <span class="over">• late</span>' : ""} ${rcBadge}</small>`;
+  const time = t.due_at ? `<small>⏰ ${fmtT(t.due_at)}${over ? ' <span class="over">• late</span>' : ""}</small>` : "";
   const dot = `<span class="dot ${t.priority || "medium"}" title="Priority: ${t.priority || "medium"}"></span>`;
   return `<li class="${t.done ? "done" : ""}">
     <button class="sq" onclick="toggleDone('${t.id}')" title="Check">${t.done ? "✓" : ""}</button>
@@ -201,7 +163,6 @@ function liHTML(t, now) {
   </li>`;
 }
 function render() {
-  refreshDatalist();
   const now = new Date();
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
@@ -236,14 +197,10 @@ function render() {
 
   // inbox
   $("inbox").classList.toggle("hidden", inbox.length === 0);
-  $("inbox-list").innerHTML = inbox.map(t => {
-    const rcp = t.recipients || [];
-    return `<span class="chip${t.done ? " done" : ""}">
+  $("inbox-list").innerHTML = inbox.map(t => `<span class="chip${t.done ? " done" : ""}">
     <button class="sq" style="width:16px;height:16px;font-size:10px" onclick="toggleDone('${t.id}')">${t.done ? "✓" : ""}</button>
     <span onclick="toggleDone('${t.id}')">${esc(t.title)}</span>
-    <button class="rcbtn" onclick="editRecipients('${t.id}')" title="${rcp.length ? esc(rcp.join(", ")) : "Add recipients"}">${rcp.length ? "→" + rcp.length : "+"}</button>
-    <button class="x" onclick="removeTodo('${t.id}')">×</button></span>`;
-  }).join("");
+    <button class="x" onclick="removeTodo('${t.id}')">×</button></span>`).join("");
 
   // 7 day columns
   $("week").innerHTML = [0, 1, 2, 3, 4, 5, 6].map(i => {
@@ -335,16 +292,24 @@ $("profile-toggle").onclick = () => {
   const um = (user && user.user_metadata) || {};
   $("profile-name").value = um.display_name || "";
   $("profile-email").textContent = (user && user.email) || "";
+  $("profile-phone").value = profilePhone || "";
   p.classList.remove("hidden");
 };
 $("profile-name").onkeydown = e => { if (e.key === "Enter") $("btn-save-name").click(); };
+$("profile-phone").onkeydown = e => { if (e.key === "Enter") $("btn-save-name").click(); };
 $("btn-save-name").onclick = async () => {
   const name = $("profile-name").value.trim();
-  if (!name) { toast("Type a name first"); return; }
+  const phone = normNum($("profile-phone").value);
+  if (phone && phone.length < 9) { toast("Invalid WhatsApp number"); return; }
   if (!sbClient || !user) return;
-  const { error } = await sbClient.auth.updateUser({ data: { display_name: name } });
-  if (error) { toast(error.message); return; }
-  renderGreet(); toast("✅ Name saved");
+  if (name) {
+    const { error } = await sbClient.auth.updateUser({ data: { display_name: name } });
+    if (error) { toast(error.message); return; }
+  }
+  const { error: pErr } = await sbClient.from("profiles").upsert({ id: user.id, phone }, { onConflict: "id" });
+  if (pErr) { toast(pErr.message); return; }
+  profilePhone = phone;
+  renderGreet(); toast(phone ? "✅ Profile saved → " + phone : "✅ Profile saved");
   $("profile-panel").classList.add("hidden");
 };
 $("input-title").onkeydown = e => { if (e.key === "Enter") addTodo(); };
@@ -384,8 +349,8 @@ async function boot() {
       user = (sess && sess.user) || null;
       document.body.classList.toggle("logged-out", !user);
       document.body.classList.toggle("logged-in", !!user);
-      if (!user) $("profile-panel").classList.add("hidden");
-      if (user) { renderGreet(); load(); }
+      if (!user) { profilePhone = ""; $("profile-panel").classList.add("hidden"); }
+      if (user) { renderGreet(); loadProfile().then(load); } else { renderGreet(); }
     });
     const { data } = await sbClient.auth.getSession();
     user = (data.session && data.session.user) || null;
@@ -395,6 +360,6 @@ async function boot() {
     document.body.classList.remove("logged-out");
   }
   renderGreet();
-  if (!sbClient || user) load();
+  if (!sbClient || user) { await loadProfile(); load(); }
 }
 boot();

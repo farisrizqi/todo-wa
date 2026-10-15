@@ -1,5 +1,5 @@
-/* Cloudflare Worker: bridge Todo App -> GOWA (aldinokemal v9 API), multi-recipient.
- * Recipients travel per-todo (todo.recipients, max 5). No fixed target number here.
+/* Cloudflare Worker: bridge Todo App -> GOWA (aldinokemal v9 API).
+ * Each todo notifies ITS OWNER's number (from the profiles table, set in Profile).
  * Env vars (dashboard Settings > Variables and Secrets):
  *   SUPABASE_URL, SUPABASE_SERVICE_KEY,
  *   GOWA_URL (e.g. https://gowa-xxx.app.ravenhost.space, empty = sending disabled),
@@ -11,6 +11,21 @@
 function fmtDate(iso) {
   if (!iso) return "no deadline";
   return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function sbHeaders(env) {
+  return { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` };
+}
+
+// Resolve the todo owner's WhatsApp number from profiles (service_role bypasses RLS).
+async function getOwnerPhone(env, userId) {
+  if (!userId) return "";
+  try {
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?select=phone&id=eq.${userId}`, { headers: sbHeaders(env) });
+    if (!r.ok) return "";
+    const arr = await r.json();
+    return (arr[0] && arr[0].phone) || "";
+  } catch (e) { return ""; }
 }
 
 function normPhone(raw) {
@@ -44,20 +59,16 @@ async function sendOne(env, text, rawPhone) {
   return { ok, phone, message_id: (data && data.results && data.results.message_id) || null, detail: (data && (data.message || data.code)) || "non-JSON response (GOWA may be waking up)" };
 }
 
-async function sendWA(env, text, recipients) {
+async function sendWA(env, text, rawPhone) {
   if (!env.GOWA_URL) return { skipped: true, reason: "GOWA_URL not set" };
-  const list = (recipients || []).slice(0, 5);
-  if (!list.length) return { skipped: true, reason: "no recipients" };
-  const results = [];
-  for (const p of list) results.push(await sendOne(env, text, p));
-  const allOk = results.every(r => r.ok === true);
-  return { ok: allOk, results };
+  if (!rawPhone) return { skipped: true, reason: "owner has no phone in profile" };
+  return sendOne(env, text, rawPhone);
 }
 
 async function patchTodo(env, id, patch) {
   await fetch(`${env.SUPABASE_URL}/rest/v1/todos?id=eq.${id}`, {
     method: "PATCH",
-    headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
+    headers: { ...sbHeaders(env), "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   }).catch(() => {});
 }
@@ -68,29 +79,37 @@ async function handleNotify(req, env) {
   const text = type === "done"
     ? `✅ Done: ${todo.title}`
     : `⏰ Reminder: ${todo.title} (${fmtDate(todo.due_at)})`;
-  const r = await sendWA(env, text, todo.recipients);
+  const phone = await getOwnerPhone(env, todo.user_id);
+  const r = await sendWA(env, text, phone);
   if (type === "done" && r.ok === true && todo.id) await patchTodo(env, todo.id, { sent: true });
   return Response.json({ sent: r.ok === true, ...r });
 }
 
 // Reminder sweep: due within [now-30m, now+offset], not done, not reminded.
-// Only marks reminded when every send actually succeeded (or sending is disabled),
+// Only marks reminded when the send actually succeeded (or sending is disabled),
 // so a sleeping GOWA gets retried on the next run instead of losing the reminder.
-// Todos with zero recipients are marked immediately so they are not re-swept forever.
+// Todos whose owner has no phone are marked with a note so they are not re-swept forever.
 async function handleCheck(env) {
   const offsetMin = Number(env.REMINDER_OFFSET_MIN || 3);
   const now = Date.now();
   const dueBefore = new Date(now + offsetMin * 60 * 1000).toISOString();
   const dueAfter = new Date(now - 30 * 60 * 1000).toISOString();
-  const q = `${env.SUPABASE_URL}/rest/v1/todos?select=id,title,due_at,recipients&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=20`;
-  const listRes = await fetch(q, {
-    headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
-  });
+  const q = `${env.SUPABASE_URL}/rest/v1/todos?select=id,title,due_at,user_id&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=20`;
+  const listRes = await fetch(q, { headers: sbHeaders(env) });
   if (!listRes.ok) return Response.json({ error: "supabase query failed", status: listRes.status }, { status: 500 });
   const items = await listRes.json();
+  // Batch-resolve owner phones in one query.
+  const uids = [...new Set(items.map(t => t.user_id).filter(Boolean))];
+  const phones = {};
+  if (uids.length) {
+    try {
+      const pr = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?select=id,phone&id=in.(${uids.join(",")})`, { headers: sbHeaders(env) });
+      if (pr.ok) (await pr.json()).forEach(p => { phones[p.id] = p.phone || ""; });
+    } catch (e) {}
+  }
   const results = [];
   for (const t of items) {
-    const r = await sendWA(env, `⏰ Reminder: ${t.title} (${fmtDate(t.due_at)})`, t.recipients);
+    const r = await sendWA(env, `⏰ Reminder: ${t.title} (${fmtDate(t.due_at)})`, phones[t.user_id] || "");
     if (r.ok === true || r.skipped) await patchTodo(env, t.id, { reminded: true });
     results.push({ id: t.id, ...r });
   }
@@ -103,7 +122,7 @@ export default {
     if (req.method === "POST" && url.pathname === "/notify") return handleNotify(req, env);
     if (req.method === "GET" && url.pathname === "/check-reminders") return handleCheck(env);
     if (req.method === "GET" && url.pathname === "/health") {
-      return Response.json({ ok: true, mode: "gowa-multi", sender: !!env.GOWA_URL });
+      return Response.json({ ok: true, mode: "gowa-profile", sender: !!env.GOWA_URL });
     }
     return new Response("Todo WA Bridge: POST /notify | GET /check-reminders | GET /health", { status: 404 });
   },
