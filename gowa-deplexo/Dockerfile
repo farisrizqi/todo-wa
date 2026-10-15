@@ -5,4 +5,4 @@
 # Env (dashboard): APP_PORT=3000, DB_URI, DB_KEYS_URI (same Postgres),
 #   WHATSAPP_CHAT_STORAGE=false, APP_BASIC_AUTH="user:pass", APP_OS="TodoWA"
 FROM aldinokemal2104/go-whatsapp-web-multidevice:latest
-RUN mkdir -p /app/storages /app/statics
+RUN mkdir -p /app/storages /app/statics /app/statics/qrcode
