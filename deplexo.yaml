@@ -1,0 +1,8 @@
+version: 1
+type: web
+build:
+  root_dir: baileys-gateway
+  framework: dockerfile
+  dockerfile: Dockerfile
+run:
+  port: 3000
