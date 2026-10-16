@@ -56,7 +56,7 @@ async function sendOne(env, text, rawPhone) {
   let data = null;
   try { data = await res.json(); } catch (e) { /* waking-up page is HTML, not JSON */ }
   const ok = res.ok && !!data && data.code === "SUCCESS";
-  return { ok, phone, message_id: (data && data.results && data.results.message_id) || null, detail: (data && (data.message || data.code)) || "non-JSON response (GOWA may be waking up)" };
+  return { ok, status: res.status, phone, message_id: (data && data.results && data.results.message_id) || null, detail: (data && (data.message || data.code)) || "non-JSON response (GOWA may be waking up)" };
 }
 
 async function sendWA(env, text, rawPhone) {
