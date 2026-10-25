@@ -605,24 +605,34 @@ $("profile-toggle").onclick = () => {
 };
 $("profile-name").onkeydown = e => { if (e.key === "Enter") $("btn-save-name").click(); };
 $("profile-phone").onkeydown = e => { if (e.key === "Enter") $("btn-save-name").click(); };
-$("btn-save-name").onclick = async () => {
+async function saveProfile() {
   const name = $("profile-name").value.trim();
   const phone = normNum($("profile-phone").value);
-  if (phone && phone.length < 9) { toast("Invalid WhatsApp number"); return; }
-  if (!sbClient || !user) return;
+  if (phone && phone.length < 9) {
+    toast("⚠️ Invalid WhatsApp number (min 9 digits)");
+    $("profile-phone").focus();
+    return false;
+  }
+  if (!sbClient || !user) {
+    toast("⚠️ Not signed in to cloud");
+    return false;
+  }
   if (name) {
     const { error } = await sbClient.auth.updateUser({ data: { display_name: name } });
-    if (error) { toast(error.message); return; }
+    if (error) { toast("Auth error: " + error.message); return false; }
   }
   const payload = { id: user.id, phone };
   if (name) payload.name = name;
   const { error: pErr } = await sbClient.from("profiles").upsert(payload, { onConflict: "id" });
-  if (pErr) { toast(pErr.message); return; }
+  if (pErr) { toast("Database error: " + pErr.message); return false; }
   profilePhone = phone;
   if (name) profileName = name;
-  renderGreet(); toast(phone ? "✅ Profile saved → " + phone : "✅ Profile saved");
+  renderGreet();
+  toast(phone ? "✅ Profile saved → " + phone : "✅ Profile saved");
   $("profile-panel").classList.add("hidden");
-};
+  return true;
+}
+$("btn-save-name").onclick = saveProfile;
 $("input-title").onkeydown = e => { if (e.key === "Enter") addTodo(); };
 $("input-search").oninput = e => { search = e.target.value; render(); };
 $("btn-prev").onclick = () => { weekStart = addDays(weekStart, -7); saveWeekStart(); render(); };
@@ -794,7 +804,7 @@ function showTourStep(index) {
   $("tour-desc").textContent = step.desc;
 
   $("btn-tour-prev").style.display = index === 0 ? "none" : "inline-block";
-  $("btn-tour-next").textContent = index === TOUR_STEPS.length - 1 ? "Finish & Complete Profile 🎉" : "Next 👉";
+  $("btn-tour-next").textContent = index === TOUR_STEPS.length - 1 ? "Save Profile & Finish 🎉" : "Next 👉";
 
   box.classList.remove("hidden");
 }
@@ -830,7 +840,21 @@ $("btn-skip-tour").onclick = () => closeUpdateModal(true);
 $("btn-start-tour").onclick = startTour;
 
 $("btn-tour-prev").onclick = () => showTourStep(currentTourStep - 1);
-$("btn-tour-next").onclick = () => showTourStep(currentTourStep + 1);
+$("btn-tour-next").onclick = async () => {
+  if (currentTourStep === TOUR_STEPS.length - 1) {
+    const nameVal = $("profile-name").value.trim();
+    const phoneVal = $("profile-phone").value.trim();
+    if (nameVal || phoneVal) {
+      const ok = await saveProfile();
+      if (!ok) return;
+    } else {
+      $("profile-panel").classList.add("hidden");
+    }
+    endTour(true);
+  } else {
+    showTourStep(currentTourStep + 1);
+  }
+};
 $("btn-exit-tour").onclick = () => endTour(true);
 $("modal-update-notice").onclick = (e) => {
   if (e.target === $("modal-update-notice")) closeUpdateModal(true);
