@@ -249,20 +249,21 @@ ${hashtags}`;
 }
 
 // Reminder sweep: checks tasks due soon or with custom reminder window.
-// Sweep window: [now - 30m, now + 24h]. Fires when now >= (due_at - reminder_offset_min).
+// Sweep window: tasks due up to 24h ahead. Fires when now >= (due_at - reminder_offset_min).
 async function handleCheck(env) {
   try {
     const defaultOffsetMin = Number((env && env.REMINDER_OFFSET_MIN) || 3);
     const now = Date.now();
     const dueBefore = new Date(now + 24 * 60 * 60 * 1000).toISOString();
-    const dueAfter = new Date(now - 30 * 60 * 1000).toISOString();
     const sbUrl = getSupabaseUrl(env);
-    const q = `${sbUrl}/rest/v1/todos?select=id,title,due_at,reminder_offset_min,user_id&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=50`;
+
+    // Fetch pending tasks due up to 24h ahead (avoid double-encoded date filters in PostgREST)
+    const q = `${sbUrl}/rest/v1/todos?select=id,title,due_at,reminder_offset_min,user_id&done=eq.false&reminded=eq.false&due_at=not.is.null&due_at=lte.${encodeURIComponent(dueBefore)}&order=due_at.asc&limit=100`;
     const listRes = await fetch(q, { headers: sbHeaders(env) });
-    if (!listRes.ok) return Response.json({ error: "supabase query failed", status: listRes.status }, { status: 500 });
+    if (!listRes.ok) return Response.json({ error: "supabase query failed", status: listRes.status, url: q }, { status: 500 });
     const allItems = await listRes.json();
 
-    // Filter tasks whose reminder trigger time has arrived
+    // Filter tasks whose reminder trigger time has arrived (allow up to 2 hours after deadline)
     const items = allItems.filter(t => {
       if (!t.due_at) return false;
 
@@ -280,7 +281,7 @@ async function handleCheck(env) {
 
       const dueTime = new Date(t.due_at).getTime();
       const remindTime = dueTime - (offsetMin * 60 * 1000);
-      return now >= remindTime && now <= dueTime + (30 * 60 * 1000);
+      return now >= remindTime && now <= dueTime + (2 * 60 * 60 * 1000);
     });
 
     // Batch-resolve owner phones and names in one query.
@@ -308,9 +309,14 @@ async function handleCheck(env) {
       if (r.ok === true || (r.skipped && r.reason === "owner has no phone in profile")) {
         await patchTodo(env, t.id, { reminded: true });
       }
-      results.push({ id: t.id, ...r });
+      results.push({ id: t.id, title: t.title, phone: owner.phone || null, ...r });
     }
-    return Response.json({ checked: items.length, totalUpcoming: allItems.length, results });
+    return Response.json({
+      checked: items.length,
+      totalUpcoming: allItems.length,
+      serverTime: new Date(now).toISOString(),
+      results
+    });
   } catch (err) {
     return Response.json({
       error: "handleCheck exception: " + String(err && err.message || err),
@@ -381,13 +387,27 @@ export default {
       results.computed_auth_header = getAuthHeader(env && env.GOWA_BASIC_AUTH) ? "PRESENT" : "NONE";
       results.has_supabase_service_key = !!(env && env.SUPABASE_SERVICE_KEY);
 
+      // Check specific target todo if provided (or default)
+      const targetId = url.searchParams.get("todo_id") || "e4a8a254-0852-4dde-b90f-757d25f181a6";
+      try {
+        const tr = await fetch(`${sbUrl}/rest/v1/todos?id=eq.${targetId}`, { headers: sbHeaders(env) });
+        results.target_todo = await tr.json();
+      } catch (e) { results.target_todo_error = String(e); }
+
+      // Check specific user profile if provided (or default)
+      const targetUid = url.searchParams.get("user_id") || "068db014-e1a0-4875-baa3-1cd16a3ab14b";
+      try {
+        const pr = await fetch(`${sbUrl}/rest/v1/profiles?id=eq.${targetUid}`, { headers: sbHeaders(env) });
+        results.target_profile = await pr.json();
+      } catch (e) { results.target_profile_error = String(e); }
+
       // Test Supabase connection & check latest pending todos
       try {
-        const sbRes = await fetch(`${sbUrl}/rest/v1/todos?select=id,title,due_at,reminded,done,reminder_offset_min&done=eq.false&order=due_at.asc&limit=5`, {
+        const sbRes = await fetch(`${sbUrl}/rest/v1/todos?select=id,title,due_at,reminded,done,reminder_offset_min&done=eq.false&order=due_at.desc&limit=5`, {
           headers: sbHeaders(env)
         });
         results.supabase_status = sbRes.status;
-        results.supabase_pending_todos = await sbRes.json();
+        results.supabase_recent_todos = await sbRes.json();
       } catch (e) {
         results.supabase_error = String(e && e.message || e);
       }
@@ -402,23 +422,25 @@ export default {
         } catch (e) { results.devices_auth_error = String(e && e.message || e); }
       }
 
-      // Test send sample message
-      const testHeaders = { "Content-Type": "application/json" };
-      if (authH) testHeaders["Authorization"] = authH;
-      if (deviceId) testHeaders["X-Device-Id"] = deviceId;
+      // Only test send message if explicitly requested: /debug?send=1
+      if (url.searchParams.get("send") === "1") {
+        const testHeaders = { "Content-Type": "application/json" };
+        if (authH) testHeaders["Authorization"] = authH;
+        if (deviceId) testHeaders["X-Device-Id"] = deviceId;
 
-      try {
-        const r4 = await fetch(targetUrl + "/send/message" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""), {
-          method: "POST",
-          headers: testHeaders,
-          body: JSON.stringify({
-            phone: "6289506982507",
-            message: "Testing WA Reminder Todo"
-          })
-        });
-        results.send_status = r4.status;
-        results.send_text = (await r4.text()).slice(0, 200);
-      } catch (e) { results.send_error = String(e && e.message || e); }
+        try {
+          const r4 = await fetch(targetUrl + "/send/message" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""), {
+            method: "POST",
+            headers: testHeaders,
+            body: JSON.stringify({
+              phone: "6289506982507",
+              message: "Testing WA Reminder Todo"
+            })
+          });
+          results.send_status = r4.status;
+          results.send_text = (await r4.text()).slice(0, 200);
+        } catch (e) { results.send_error = String(e && e.message || e); }
+      }
 
       return Response.json(results);
     }
