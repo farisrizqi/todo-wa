@@ -2,11 +2,30 @@
  * Each todo notifies ITS OWNER's number (from the profiles table, set in Profile).
  * Env vars (dashboard Settings > Variables and Secrets):
  *   SUPABASE_URL, SUPABASE_SERVICE_KEY,
- *   GOWA_URL (e.g. https://gowa-xxx.app.ravenhost.space, empty = sending disabled),
+ *   GOWA_URL (default: https://gowa-fardev.de.deplexo.com),
  *   GOWA_BASIC_AUTH (base64 of "user:pass", optional, only if GOWA uses --basic-auth),
- *   GOWA_DEVICE_ID (optional, required only with multiple linked devices),
+ *   GOWA_DEVICE_ID (default: far-dev),
  *   REMINDER_OFFSET_MIN (default 3)
  */
+
+const DEFAULT_GOWA_URL = "https://gowa-fardev.de.deplexo.com";
+const DEFAULT_DEVICE_ID = "far-dev";
+const DEFAULT_SUPABASE_URL = "https://vfwinvfipuiztnqfjyow.supabase.co";
+
+function getGowaUrl(env) {
+  const val = (env && env.GOWA_URL) || DEFAULT_GOWA_URL;
+  return String(val || "").trim().replace(/\/$/, "");
+}
+
+function getDeviceIdSetting(env) {
+  const val = (env && env.GOWA_DEVICE_ID) || DEFAULT_DEVICE_ID;
+  return String(val || "").trim();
+}
+
+function getSupabaseUrl(env) {
+  const val = (env && env.SUPABASE_URL) || DEFAULT_SUPABASE_URL;
+  return String(val || "").trim().replace(/\/$/, "");
+}
 
 function fmtDate(iso) {
   if (!iso) return "no deadline";
@@ -14,14 +33,16 @@ function fmtDate(iso) {
 }
 
 function sbHeaders(env) {
-  return { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` };
+  const key = (env && env.SUPABASE_SERVICE_KEY) || "";
+  return { apikey: key, Authorization: `Bearer ${key}` };
 }
 
 // Resolve the todo owner's WhatsApp number from profiles (service_role bypasses RLS).
 async function getOwnerPhone(env, userId) {
   if (!userId) return "";
   try {
-    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?select=phone&id=eq.${userId}`, { headers: sbHeaders(env) });
+    const sbUrl = getSupabaseUrl(env);
+    const r = await fetch(`${sbUrl}/rest/v1/profiles?select=phone&id=eq.${userId}`, { headers: sbHeaders(env) });
     if (!r.ok) return "";
     const arr = await r.json();
     return (arr[0] && arr[0].phone) || "";
@@ -56,39 +77,43 @@ let cachedDeviceId = null;
 let cachedDeviceExpiry = 0;
 
 async function resolveDeviceId(env) {
-  if (env.GOWA_DEVICE_ID && String(env.GOWA_DEVICE_ID).trim()) {
-    return String(env.GOWA_DEVICE_ID).trim();
-  }
+  const configured = (env && env.GOWA_DEVICE_ID && String(env.GOWA_DEVICE_ID).trim()) || "";
+  if (configured) return configured;
+
   if (cachedDeviceId && Date.now() < cachedDeviceExpiry) {
     return cachedDeviceId;
   }
-  if (!env.GOWA_URL) return "";
+  const gowaUrl = getGowaUrl(env);
+  if (!gowaUrl) return DEFAULT_DEVICE_ID;
   try {
     const headers = {};
-    const authH = getAuthHeader(env.GOWA_BASIC_AUTH);
+    const authH = getAuthHeader(env && env.GOWA_BASIC_AUTH);
     if (authH) headers["Authorization"] = authH;
-    const res = await fetch(env.GOWA_URL.replace(/\/$/, "") + "/devices", { headers });
-    if (!res.ok) return "";
+    const res = await fetch(gowaUrl + "/devices", { headers });
+    if (!res.ok) return DEFAULT_DEVICE_ID;
     const data = await res.json();
     const list = Array.isArray(data.results) ? data.results : (Array.isArray(data) ? data : []);
-    const active = list.find(d => d.status === "running" || d.status === "connected" || d.connected) || list[0];
+    const active = list.find(d => d.status === "running" || d.status === "connected" || d.connected || d.state === "logged_in") || list[0];
     if (active && (active.id || active.device_id || active.phone)) {
       cachedDeviceId = String(active.id || active.device_id || active.phone);
       cachedDeviceExpiry = Date.now() + 5 * 60 * 1000;
       return cachedDeviceId;
     }
   } catch (e) { }
-  return "";
+  return DEFAULT_DEVICE_ID;
 }
 
 async function sendOne(env, text, rawPhone) {
   const phone = normPhone(rawPhone);
   if (!phone) return { ok: false, phone: String(rawPhone), reason: "bad number" };
 
+  const gowaUrl = getGowaUrl(env);
+  if (!gowaUrl) return { ok: false, phone, reason: "GOWA_URL not configured" };
+
   const deviceId = await resolveDeviceId(env);
 
   const headers = { "Content-Type": "application/json" };
-  const authH = getAuthHeader(env.GOWA_BASIC_AUTH);
+  const authH = getAuthHeader(env && env.GOWA_BASIC_AUTH);
   if (authH) headers["Authorization"] = authH;
   if (deviceId) headers["X-Device-Id"] = deviceId;
 
@@ -98,7 +123,7 @@ async function sendOne(env, text, rawPhone) {
   let queryStr = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
   let res;
   try {
-    res = await fetch(env.GOWA_URL.replace(/\/$/, "") + "/send/message" + queryStr, {
+    res = await fetch(gowaUrl + "/send/message" + queryStr, {
       method: "POST",
       headers,
       body: JSON.stringify(bodyObj),
@@ -117,13 +142,15 @@ async function sendOne(env, text, rawPhone) {
 }
 
 async function sendWA(env, text, rawPhone) {
-  if (!env.GOWA_URL) return { skipped: true, reason: "GOWA_URL not set" };
+  const gowaUrl = getGowaUrl(env);
+  if (!gowaUrl) return { skipped: true, reason: "GOWA_URL not set" };
   if (!rawPhone) return { skipped: true, reason: "owner has no phone in profile" };
   return sendOne(env, text, rawPhone);
 }
 
 async function patchTodo(env, id, patch) {
-  await fetch(`${env.SUPABASE_URL}/rest/v1/todos?id=eq.${id}`, {
+  const sbUrl = getSupabaseUrl(env);
+  await fetch(`${sbUrl}/rest/v1/todos?id=eq.${id}`, {
     method: "PATCH",
     headers: { ...sbHeaders(env), "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -224,61 +251,72 @@ ${hashtags}`;
 // Reminder sweep: checks tasks due soon or with custom reminder window.
 // Sweep window: [now - 30m, now + 24h]. Fires when now >= (due_at - reminder_offset_min).
 async function handleCheck(env) {
-  const defaultOffsetMin = Number(env.REMINDER_OFFSET_MIN || 3);
-  const now = Date.now();
-  const dueBefore = new Date(now + 24 * 60 * 60 * 1000).toISOString();
-  const dueAfter = new Date(now - 30 * 60 * 1000).toISOString();
-  const q = `${env.SUPABASE_URL}/rest/v1/todos?select=id,title,due_at,reminder_offset_min,user_id&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=50`;
-  const listRes = await fetch(q, { headers: sbHeaders(env) });
-  if (!listRes.ok) return Response.json({ error: "supabase query failed", status: listRes.status }, { status: 500 });
-  const allItems = await listRes.json();
+  try {
+    const defaultOffsetMin = Number((env && env.REMINDER_OFFSET_MIN) || 3);
+    const now = Date.now();
+    const dueBefore = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const dueAfter = new Date(now - 30 * 60 * 1000).toISOString();
+    const sbUrl = getSupabaseUrl(env);
+    const q = `${sbUrl}/rest/v1/todos?select=id,title,due_at,reminder_offset_min,user_id&done=eq.false&reminded=eq.false&due_at=lte.${encodeURIComponent(dueBefore)}&due_at=gte.${encodeURIComponent(dueAfter)}&order=due_at.asc&limit=50`;
+    const listRes = await fetch(q, { headers: sbHeaders(env) });
+    if (!listRes.ok) return Response.json({ error: "supabase query failed", status: listRes.status }, { status: 500 });
+    const allItems = await listRes.json();
 
-  // Filter tasks whose reminder trigger time has arrived
-  const items = allItems.filter(t => {
-    if (!t.due_at) return false;
+    // Filter tasks whose reminder trigger time has arrived
+    const items = allItems.filter(t => {
+      if (!t.due_at) return false;
 
-    let offsetMin;
-    if (t.reminder_offset_min === null && t.reminder_offset_min !== 0) {
-      // Explicitly no reminder (none), but check legacy title tag just in case
-      const titleTag = parseReminderMinutes(t.title);
-      if (titleTag === null) return false;
-      offsetMin = titleTag;
-    } else if (typeof t.reminder_offset_min === "number") {
-      offsetMin = t.reminder_offset_min;
-    } else {
-      offsetMin = parseReminderMinutes(t.title) ?? defaultOffsetMin;
-    }
-
-    const dueTime = new Date(t.due_at).getTime();
-    const remindTime = dueTime - (offsetMin * 60 * 1000);
-    return now >= remindTime && now <= dueTime + (30 * 60 * 1000);
-  });
-
-  // Batch-resolve owner phones and names in one query.
-  const uids = [...new Set(items.map(t => t.user_id).filter(Boolean))];
-  const owners = {};
-  if (uids.length) {
-    try {
-      const pr = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?select=id,phone,name&id=in.(${uids.join(",")})`, { headers: sbHeaders(env) });
-      if (pr.ok) {
-        (await pr.json()).forEach(p => {
-          owners[p.id] = { phone: p.phone || "", name: p.name || "" };
-        });
+      let offsetMin;
+      if (t.reminder_offset_min === null && t.reminder_offset_min !== 0) {
+        // Explicitly no reminder (none), but check legacy title tag just in case
+        const titleTag = parseReminderMinutes(t.title);
+        if (titleTag === null) return false;
+        offsetMin = titleTag;
+      } else if (typeof t.reminder_offset_min === "number") {
+        offsetMin = t.reminder_offset_min;
+      } else {
+        offsetMin = parseReminderMinutes(t.title) ?? defaultOffsetMin;
       }
-    } catch (e) { }
+
+      const dueTime = new Date(t.due_at).getTime();
+      const remindTime = dueTime - (offsetMin * 60 * 1000);
+      return now >= remindTime && now <= dueTime + (30 * 60 * 1000);
+    });
+
+    // Batch-resolve owner phones and names in one query.
+    const uids = [...new Set(items.map(t => t.user_id).filter(Boolean))];
+    const owners = {};
+    if (uids.length) {
+      try {
+        const pr = await fetch(`${sbUrl}/rest/v1/profiles?select=id,phone,name&id=in.(${uids.join(",")})`, { headers: sbHeaders(env) });
+        if (pr.ok) {
+          (await pr.json()).forEach(p => {
+            owners[p.id] = { phone: p.phone || "", name: p.name || "" };
+          });
+        }
+      } catch (e) { }
+    }
+    const results = [];
+    for (const t of items) {
+      const owner = owners[t.user_id] || {};
+      const offsetMin = (typeof t.reminder_offset_min === "number")
+        ? t.reminder_offset_min
+        : (parseReminderMinutes(t.title) ?? defaultOffsetMin);
+      const msg = generateReminderMessage(t, owner.name, offsetMin);
+      const r = await sendWA(env, msg, owner.phone || "");
+      // Only mark reminded if actually sent successfully or if user has no phone in profile
+      if (r.ok === true || (r.skipped && r.reason === "owner has no phone in profile")) {
+        await patchTodo(env, t.id, { reminded: true });
+      }
+      results.push({ id: t.id, ...r });
+    }
+    return Response.json({ checked: items.length, totalUpcoming: allItems.length, results });
+  } catch (err) {
+    return Response.json({
+      error: "handleCheck exception: " + String(err && err.message || err),
+      stack: String(err && err.stack || "")
+    }, { status: 500 });
   }
-  const results = [];
-  for (const t of items) {
-    const owner = owners[t.user_id] || {};
-    const offsetMin = (typeof t.reminder_offset_min === "number")
-      ? t.reminder_offset_min
-      : (parseReminderMinutes(t.title) ?? defaultOffsetMin);
-    const msg = generateReminderMessage(t, owner.name, offsetMin);
-    const r = await sendWA(env, msg, owner.phone || "");
-    if (r.ok === true || r.skipped) await patchTodo(env, t.id, { reminded: true });
-    results.push({ id: t.id, ...r });
-  }
-  return Response.json({ checked: items.length, totalUpcoming: allItems.length, results });
 }
 
 export default {
@@ -287,15 +325,32 @@ export default {
     if (req.method === "POST" && url.pathname === "/notify") return handleNotify(req, env);
     if (req.method === "GET" && url.pathname === "/check-reminders") return handleCheck(env);
     if (req.method === "GET" && url.pathname === "/health") {
+      const gowaUrl = getGowaUrl(env);
       const deviceId = await resolveDeviceId(env);
-      return Response.json({ ok: true, mode: "gowa-profile", sender: !!env.GOWA_URL, device_id: deviceId || null });
+      return Response.json({ ok: true, mode: "gowa-profile", gowa_url: gowaUrl, sender: !!gowaUrl, device_id: deviceId || null });
+    }
+    if (req.method === "GET" && url.pathname === "/reset-reminded") {
+      // Emergency endpoint: resets reminded = false for todos that are not done yet
+      try {
+        const sbUrl = getSupabaseUrl(env);
+        const patchRes = await fetch(`${sbUrl}/rest/v1/todos?done=eq.false`, {
+          method: "PATCH",
+          headers: { ...sbHeaders(env), "Content-Type": "application/json" },
+          body: JSON.stringify({ reminded: false }),
+        });
+        return Response.json({ ok: patchRes.ok, status: patchRes.status, message: "All pending tasks reset to reminded = false" });
+      } catch (e) {
+        return Response.json({ error: String(e && e.message || e) }, { status: 500 });
+      }
     }
     if (req.method === "GET" && url.pathname === "/devices") {
-      if (!env.GOWA_URL) return Response.json({ error: "GOWA_URL not configured" }, { status: 500 });
+      const gowaUrl = getGowaUrl(env);
+      if (!gowaUrl) return Response.json({ error: "GOWA_URL not configured" }, { status: 500 });
       const headers = {};
-      if (env.GOWA_BASIC_AUTH) headers["Authorization"] = "Basic " + String(env.GOWA_BASIC_AUTH).trim();
+      const authH = getAuthHeader(env && env.GOWA_BASIC_AUTH);
+      if (authH) headers["Authorization"] = authH;
       try {
-        const r = await fetch(env.GOWA_URL.replace(/\/$/, "") + "/devices", { headers });
+        const r = await fetch(gowaUrl + "/devices", { headers });
         const text = await r.text();
         return new Response(text, { status: r.status, headers: { "Content-Type": "application/json" } });
       } catch (e) {
@@ -315,28 +370,30 @@ export default {
     }
     if (req.method === "GET" && url.pathname === "/debug") {
       const results = {};
-      const targetUrl = env.GOWA_URL ? env.GOWA_URL.replace(/\/$/, "") : "";
+      const targetUrl = getGowaUrl(env);
+      const sbUrl = getSupabaseUrl(env);
+      const deviceId = await resolveDeviceId(env);
+
       results.gowa_url = targetUrl;
-      results.raw_basic_auth = env.GOWA_BASIC_AUTH ? `${env.GOWA_BASIC_AUTH.slice(0, 3)}***` : "NOT_SET";
-      results.computed_auth_header = getAuthHeader(env.GOWA_BASIC_AUTH) ? "PRESENT" : "NONE";
-      results.device_id_setting = env.GOWA_DEVICE_ID || "NOT_SET";
+      results.supabase_url = sbUrl;
+      results.device_id_resolved = deviceId;
+      results.raw_basic_auth = env && env.GOWA_BASIC_AUTH ? `${String(env.GOWA_BASIC_AUTH).slice(0, 3)}***` : "NOT_SET";
+      results.computed_auth_header = getAuthHeader(env && env.GOWA_BASIC_AUTH) ? "PRESENT" : "NONE";
+      results.has_supabase_service_key = !!(env && env.SUPABASE_SERVICE_KEY);
 
-      // Test 1: Fetch root "/"
+      // Test Supabase connection & check latest pending todos
       try {
-        const r1 = await fetch(targetUrl + "/");
-        results.root_status = r1.status;
-        results.root_text = (await r1.text()).slice(0, 150);
-      } catch (e) { results.root_error = String(e && e.message || e); }
+        const sbRes = await fetch(`${sbUrl}/rest/v1/todos?select=id,title,due_at,reminded,done,reminder_offset_min&done=eq.false&order=due_at.asc&limit=5`, {
+          headers: sbHeaders(env)
+        });
+        results.supabase_status = sbRes.status;
+        results.supabase_pending_todos = await sbRes.json();
+      } catch (e) {
+        results.supabase_error = String(e && e.message || e);
+      }
 
-      // Test 2: Fetch "/devices" without auth
-      try {
-        const r2 = await fetch(targetUrl + "/devices");
-        results.devices_no_auth_status = r2.status;
-        results.devices_no_auth_text = (await r2.text()).slice(0, 150);
-      } catch (e) { results.devices_no_auth_error = String(e && e.message || e); }
-
-      // Test 3: Fetch "/devices" with auth (if set)
-      const authH = getAuthHeader(env.GOWA_BASIC_AUTH);
+      // Test GOWA with auth
+      const authH = getAuthHeader(env && env.GOWA_BASIC_AUTH);
       if (authH) {
         try {
           const r3 = await fetch(targetUrl + "/devices", { headers: { Authorization: authH } });
@@ -345,13 +402,13 @@ export default {
         } catch (e) { results.devices_auth_error = String(e && e.message || e); }
       }
 
-      // Test 4: Send sample message
+      // Test send sample message
       const testHeaders = { "Content-Type": "application/json" };
       if (authH) testHeaders["Authorization"] = authH;
-      if (env.GOWA_DEVICE_ID) testHeaders["X-Device-Id"] = env.GOWA_DEVICE_ID;
+      if (deviceId) testHeaders["X-Device-Id"] = deviceId;
 
       try {
-        const r4 = await fetch(targetUrl + "/send/message", {
+        const r4 = await fetch(targetUrl + "/send/message" + (deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ""), {
           method: "POST",
           headers: testHeaders,
           body: JSON.stringify({
@@ -365,7 +422,7 @@ export default {
 
       return Response.json(results);
     }
-    return new Response("Todo WA Bridge: POST /notify | GET /check-reminders | GET /devices | GET /test-send | GET /debug | GET /health", { status: 404 });
+    return new Response("Todo WA Bridge: POST /notify | GET /check-reminders | GET /devices | GET /test-send | GET /debug | GET /health | GET /reset-reminded", { status: 404 });
   },
   // Workers Cron Trigger (see wrangler.toml): runs the reminder sweep every minute.
   async scheduled(_event, env) {
