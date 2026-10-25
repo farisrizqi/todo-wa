@@ -131,10 +131,12 @@ function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMont
 function fmtD(d) { return d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }); }
 function fmtT(iso) { if (!iso) return ""; return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }); }
 function loadWeekStart() {
-  try { const s = localStorage.getItem("todo-weekstart"); if (s) return mondayOf(new Date(s + "T00:00:00")); } catch (e) { }
+  try { localStorage.removeItem("todo-weekstart"); } catch (e) {}
   return mondayOf(new Date());
 }
-function saveWeekStart() { try { localStorage.setItem("todo-weekstart", weekStart.toISOString().slice(0, 10)); } catch (e) { } }
+function saveWeekStart() {
+  // Navigation is memory-only so fresh reloads always start on the current week
+}
 
 /* ---------- reminder helpers (database-driven: reminder_offset_min) ---------- */
 const REMINDER_MINUTES_MAP = {
