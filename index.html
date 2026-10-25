@@ -34,7 +34,12 @@
   </section>
   <header class="topbar">
     <div class="brand">
-      <h1>WEEKLY<br />TO-DO'S</h1>
+      <div class="brand-row">
+        <h1>WEEKLY<br />TO-DO'S</h1>
+        <button id="btn-whats-new" class="btn-whats-new" title="Lihat Pembaruan Baru (v2.0)">
+          <span class="sparkle-icon">✨</span> What's New
+        </button>
+      </div>
       <p class="greet" id="greet">👋 Hello!</p>
       <p class="quote" id="quote"></p>
       <div class="weeknav">
@@ -64,6 +69,17 @@
   <section class="card addbar">
     <input id="input-title" type="text" maxlength="120" placeholder="＋ Add a new task..." />
     <input id="input-due" type="datetime-local" title="Deadline" />
+    <select id="input-reminder" title="Reminder Before Deadline">
+      <option value="none">🔕 No reminder</option>
+      <option value="0m">⏰ At due time</option>
+      <option value="5m">🔔 5 mins before</option>
+      <option value="10m">🔔 10 mins before</option>
+      <option value="15m">🔔 15 mins before</option>
+      <option value="30m" selected>🔔 30 mins before</option>
+      <option value="1h">🔔 1 hour before</option>
+      <option value="2h">🔔 2 hours before</option>
+      <option value="24h">🔔 1 day before</option>
+    </select>
     <select id="input-priority" title="Priority">
       <option value="low">🟢 Easy</option>
       <option value="medium" selected>🟡 Medium</option>
@@ -86,6 +102,118 @@
     <span>🔔 WhatsApp → 1 number</span>
   </footer>
 </div>
+
+<!-- Modal Edit Task & Reminder -->
+<div id="modal-edit" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>⏰ Edit Task &amp; Reminder</h3>
+      <button id="btn-close-modal" class="modal-close" title="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-todo-id" />
+      
+      <label class="modal-label">Task Title</label>
+      <input id="edit-todo-title" type="text" maxlength="120" placeholder="Task title..." />
+      
+      <label class="modal-label">Due Date &amp; Time (Jam To Do)</label>
+      <input id="edit-todo-due" type="datetime-local" />
+
+      <label class="modal-label">Priority (Tingkat Urgensi)</label>
+      <div id="edit-priority-options" class="prio-options-grid">
+        <button type="button" class="prio-opt-btn" data-prio="low">🟢 Easy</button>
+        <button type="button" class="prio-opt-btn" data-prio="medium">🟡 Medium</button>
+        <button type="button" class="prio-opt-btn" data-prio="high">🔴 Urgent</button>
+      </div>
+      <input type="hidden" id="edit-todo-priority" value="medium" />
+
+      <label class="modal-label">WhatsApp Reminder Before Deadline</label>
+      <div id="edit-reminder-options" class="rem-options-grid">
+        <button type="button" class="rem-opt-btn" data-rem="none">🔕 None</button>
+        <button type="button" class="rem-opt-btn" data-rem="0m">⏰ At due time</button>
+        <button type="button" class="rem-opt-btn" data-rem="5m">🔔 5 mins</button>
+        <button type="button" class="rem-opt-btn" data-rem="10m">🔔 10 mins</button>
+        <button type="button" class="rem-opt-btn" data-rem="15m">🔔 15 mins</button>
+        <button type="button" class="rem-opt-btn" data-rem="30m">🔔 30 mins</button>
+        <button type="button" class="rem-opt-btn" data-rem="1h">🔔 1 hour</button>
+        <button type="button" class="rem-opt-btn" data-rem="2h">🔔 2 hours</button>
+        <button type="button" class="rem-opt-btn" data-rem="24h">🔔 1 day</button>
+      </div>
+      <input type="hidden" id="edit-todo-reminder" value="30m" />
+    </div>
+    <div class="modal-foot">
+      <button id="btn-cancel-edit" class="btn-secondary">Cancel</button>
+      <button id="btn-save-edit" class="btn-primary">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Update v2 Notice -->
+<div id="modal-update-notice" class="modal-overlay hidden">
+  <div class="modal-card update-modal-card">
+    <div class="modal-head">
+      <h3><span>🎉</span> Feature Update (v2.0)</h3>
+      <button id="btn-close-update-modal" class="modal-close" title="Close">×</button>
+    </div>
+    <div class="modal-body update-modal-body">
+      <div class="update-hero-badge">🚀 Feature Update</div>
+      <p class="update-desc">Exciting new improvements to keep your weekly tasks organized, flexible, and automated with WhatsApp Reminders!</p>
+      
+      <div class="update-feature-list">
+        <div class="update-feature-item">
+          <div class="uf-icon">🗓️</div>
+          <div class="uf-text">
+            <b>Vertical Daily Cards &amp; Dedicated Scroll</b>
+            <span>Monday through Sunday cards now stretch vertically with independent internal scrollbars to keep your board neat and clean.</span>
+          </div>
+        </div>
+
+        <div class="update-feature-item">
+          <div class="uf-icon">⚡</div>
+          <div class="uf-text">
+            <b>Quick-Add with Due Time &amp; Priority</b>
+            <span>Add tasks directly to any day card with custom execution time (09:00), priority levels (Easy/Med/Urgent), and reminders.</span>
+          </div>
+        </div>
+
+        <div class="update-feature-item">
+          <div class="uf-icon">✏️</div>
+          <div class="uf-text">
+            <b>Edit Tasks, Deadlines &amp; Urgency</b>
+            <span>Click the pencil icon to edit task title, due datetime, priority pill, and WhatsApp reminder window anytime.</span>
+          </div>
+        </div>
+
+        <div class="update-feature-item highlight-item">
+          <div class="uf-icon">👤</div>
+          <div class="uf-text">
+            <b>Important: Complete Your WhatsApp Profile</b>
+            <span>Make sure your Display Name &amp; WhatsApp Number are saved in Profile so automated reminders reach your phone!</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot update-modal-foot">
+      <button id="btn-skip-tour" class="btn-secondary">Maybe Later</button>
+      <button id="btn-start-tour" class="btn-primary">Start Feature Tour 🚀</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tour Callout Guide Floating Box -->
+<div id="tour-guide-box" class="tour-guide-box hidden">
+  <div class="tour-guide-head">
+    <span id="tour-step-badge" class="tour-step-badge">Step 1 of 4</span>
+    <button id="btn-exit-tour" class="tour-close-btn" title="Close guide">×</button>
+  </div>
+  <h4 id="tour-title" class="tour-title">Feature Tour</h4>
+  <p id="tour-desc" class="tour-desc">Interactive feature walkthrough.</p>
+  <div class="tour-guide-actions">
+    <button id="btn-tour-prev" class="btn-tour-secondary">Back</button>
+    <button id="btn-tour-next" class="btn-tour-primary">Next 👉</button>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>
 </body>
