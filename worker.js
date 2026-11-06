@@ -27,9 +27,24 @@ function getSupabaseUrl(env) {
   return String(val || "").trim().replace(/\/$/, "");
 }
 
+const MONTHS_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
 function fmtDate(iso) {
   if (!iso) return "no deadline";
-  return new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  try {
+    const s = String(iso).trim().replace(" ", "T");
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return "no deadline";
+    // Convert to Asia/Jakarta (WIB = UTC+7)
+    const wib = new Date(d.getTime() + 7 * 60 * 60 * 1000);
+    const day = String(wib.getUTCDate()).padStart(2, "0");
+    const month = MONTHS_ID[wib.getUTCMonth()];
+    const hours = String(wib.getUTCHours()).padStart(2, "0");
+    const mins = String(wib.getUTCMinutes()).padStart(2, "0");
+    return `${day} ${month}, ${hours}:${mins} WIB`;
+  } catch (e) {
+    return String(iso);
+  }
 }
 
 function sbHeaders(env) {
@@ -279,7 +294,7 @@ async function handleCheck(env) {
         offsetMin = parseReminderMinutes(t.title) ?? defaultOffsetMin;
       }
 
-      const dueTime = new Date(t.due_at).getTime();
+      const dueTime = new Date(String(t.due_at).replace(" ", "T")).getTime();
       const remindTime = dueTime - (offsetMin * 60 * 1000);
       return now >= remindTime && now <= dueTime + (2 * 60 * 60 * 1000);
     });
